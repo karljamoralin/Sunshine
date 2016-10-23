@@ -1,8 +1,11 @@
 package com.karljamoralin.sunshine;
 
+import android.content.Intent;
+import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
+import android.preference.PreferenceManager;
 import android.support.annotation.Nullable;
 import android.support.v4.app.Fragment;
 import android.text.format.Time;
@@ -13,6 +16,7 @@ import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.ListView;
 
@@ -25,12 +29,11 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
+import java.net.URI;
 import java.net.URL;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.ExecutionException;
 
 
 public class ForecastFragment extends Fragment {
@@ -38,6 +41,7 @@ public class ForecastFragment extends Fragment {
     private final String LOG_TAG = FetchWeatherTask.class.getSimpleName();
     private ArrayAdapter<String> mAdapter;
     List<String> mWeekForecast;
+    SharedPreferences sharedPref;
 
     /**
      * Called to do initial creation of a fragment.  This is called after
@@ -60,6 +64,7 @@ public class ForecastFragment extends Fragment {
     public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setHasOptionsMenu(true);
+        sharedPref = PreferenceManager.getDefaultSharedPreferences(getContext());
     }
 
     /**
@@ -85,23 +90,25 @@ public class ForecastFragment extends Fragment {
     public View onCreateView(LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
 
         View rootView = inflater.inflate(R.layout.fragment_main, container, false);
-        String[] data =
-                {"Today - Sunny - 88 / 63",
-                        "Tomorrow - Foggy - 70 / 46",
-                        "Weds - Cloudy - 72 / 63",
-                        "Thurs - Rainy - 64 / 51",
-                        "Fri - Foggy - 70/46",
-                        "Sat - Sunny - 76/68"};
-        mWeekForecast = new ArrayList<>(Arrays.asList(data));
+
         mAdapter = new ArrayAdapter<>(
                 getActivity(),
                 R.layout.list_item_layout,
                 R.id.list_item_forecast_textview,
-                mWeekForecast);
+                new ArrayList<String>());
 
         // Get a reference to the ListView, and attach this adapter to it
         ListView listView = (ListView) rootView.findViewById(R.id.listview_forecast);
         listView.setAdapter(mAdapter);
+        listView.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+            @Override
+            public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+                String forecast = mAdapter.getItem(position);
+                Intent detailIntent = new Intent(getContext(), DetailActivity.class)
+                        .putExtra(Intent.EXTRA_TEXT, forecast);
+                startActivity(detailIntent);
+            }
+        });
 
         return rootView;
     }
@@ -126,6 +133,17 @@ public class ForecastFragment extends Fragment {
     }
 
     /**
+     * Called when the Fragment is visible to the user.  This is generally
+     * tied to {@link Activity#onStart() Activity.onStart} of the containing
+     * Activity's lifecycle.
+     */
+    @Override
+    public void onStart() {
+        super.onStart();
+        updateWeather();
+    }
+
+    /**
      * This hook is called whenever an item in your options menu is selected.
      * The default implementation simply returns false to have the normal
      * processing happen (calling the item's Runnable or sending a message to
@@ -145,12 +163,24 @@ public class ForecastFragment extends Fragment {
     public boolean onOptionsItemSelected(MenuItem item) {
         int id = item.getItemId();
         if (id == R.id.action_refresh) {
-            FetchWeatherTask fetchWeatherTask = new FetchWeatherTask();
-            fetchWeatherTask.execute("94043");
-
-            return true;
+            updateWeather();
+        } else if (id == R.id.action_settings) {
+            startActivity(new Intent(getActivity(), SettingsActivity.class));
+        } else if (id == R.id.action_map) {
+            String location = sharedPref.getString(getString(R.string.pref_location_key), getString(R.string.pref_location_default));
+            Uri uri = Uri.parse("geo:0,0?").buildUpon()
+                    .appendQueryParameter("q", location)
+                    .build();
+            Intent intent = new Intent(Intent.ACTION_VIEW);
+            intent.setData(uri);
+            startActivity(intent);
         }
         return super.onOptionsItemSelected(item);
+    }
+
+    private void updateWeather() {
+        FetchWeatherTask fetchWeatherTask = new FetchWeatherTask();
+        fetchWeatherTask.execute();
     }
 
     /* The date/time conversion code is going to be moved outside the asynctask later,
@@ -241,6 +271,13 @@ public class ForecastFragment extends Fragment {
             double high = temperatureObject.getDouble(OWM_MAX);
             double low = temperatureObject.getDouble(OWM_MIN);
 
+            String unit = sharedPref.getString(getString(R.string.pref_unit_key), getString(R.string.pref_unit_default));
+
+            if (unit.equals("imperial")) {
+                high = high * 1.8 + 32;
+                low = low * 1.8 + 32;
+            }
+
             highAndLow = formatHighLows(high, low);
             resultStrs[i] = day + " - " + description + " - " + highAndLow;
         }
@@ -299,6 +336,7 @@ public class ForecastFragment extends Fragment {
             String format = "json";
             String units = "metric";
             String days = "7";
+            String location = sharedPref.getString(getString(R.string.pref_location_key), getString(R.string.pref_location_default));
 
             // These two need to be declared outside the try/catch
             // so that they can be closed in the finally block.
@@ -310,7 +348,7 @@ public class ForecastFragment extends Fragment {
 
             try {
                 Uri uri = Uri.parse(FORECASE_BASE_URL).buildUpon()
-                        .appendQueryParameter(QUERY_PARAM, params[0])
+                        .appendQueryParameter(QUERY_PARAM, location)
                         .appendQueryParameter(FORMAT_PARAM, format)
                         .appendQueryParameter(UNITS_PARAM, units)
                         .appendQueryParameter(DAYS_PARAM, days)
